@@ -25,6 +25,7 @@ import { getCategoryMarkerColors, getCategoryMeta } from '../utils/categoryIcons
 import { buildGoogleMapsDirectionsUrl, formatDistance } from '../utils/geo';
 import { isSafeImageDataUrl } from '../utils/image';
 import { isSafeAudioDataUrl } from '../utils/audio';
+import { OsmMapContent } from './OsmMapContent';
 import { VoiceMemoPlayer } from './VoiceMemoPlayer';
 
 type SpotWithDist = Spot & { dist: number | null };
@@ -154,15 +155,14 @@ function MapContent({
     loadingStatus === APILoadingStatus.AUTH_FAILURE
   ) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-sky-50 dark:bg-[#111b27]">
-        <MapPin className="w-7 h-7 text-rose-500 mb-2" />
-        <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-          Impossibile caricare la mappa
-        </p>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-          Verifica la connessione di rete o la configurazione della chiave Google Maps.
-        </p>
-      </div>
+      <OsmMapContent
+        spots={spots}
+        currentCoords={currentCoords}
+        isDark={isDark}
+        selectedSpot={selectedSpot}
+        onSelectSpot={onSelectSpot}
+        onRefreshGPS={onRefreshGPS}
+      />
     );
   }
 
@@ -398,15 +398,14 @@ export function SpotsMapView({
       {/* Explicit Height Map Container */}
       <div className="relative w-full h-[calc(100dvh-16rem)] min-h-[360px] rounded-3xl overflow-hidden border border-sky-200/80 dark:border-slate-800 bg-sky-50 dark:bg-[#111b27] shadow-md shadow-sky-900/5">
         {!apiKey ? (
-          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center">
-            <MapPin className="w-7 h-7 text-amber-500 mb-2" />
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-              Chiave Google Maps non configurata
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-              Abilita Google Maps dalle impostazioni dell&apos;app per visualizzare la mappa interattiva.
-            </p>
-          </div>
+          <OsmMapContent
+            spots={filteredSpots}
+            currentCoords={currentCoords}
+            isDark={isDark}
+            selectedSpot={selectedSpot}
+            onSelectSpot={(s) => setSelectedSpotId(s ? s.id : null)}
+            onRefreshGPS={onRefreshGPS}
+          />
         ) : (
           <MapContent
             spots={filteredSpots}
