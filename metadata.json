@@ -1,0 +1,6 @@
+{
+  "name": "Segnaposto Rapido",
+  "description": "Salva e ritrova rapidamente parcheggi, servizi, scorciatoie e luoghi utili con GPS, foto e note offline.",
+  "requestFramePermissions": ["geolocation", "microphone"],
+  "majorCapabilities": []
+}
