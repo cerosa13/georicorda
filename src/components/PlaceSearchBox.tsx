@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { Loader2, MapPin, Search, X } from 'lucide-react';
 import { Coords } from '../types/spot';
-import { PlaceSearchResult, isValidCoords, searchPlacesNominatim } from '../utils/geo';
+import { PlaceSearchResult, isValidCoords, searchPlacesOpen } from '../utils/geo';
 
 type PlacesLibrary = NonNullable<ReturnType<typeof useMapsLibrary<'places'>>>;
 type AutocompleteFetchResult = Awaited<
@@ -132,8 +132,8 @@ export function PlaceSearchBox({
           }
         }
 
-        // Fallback to OpenStreetMap Nominatim when Maps key/Places isn't available
-        const osmResults = await searchPlacesNominatim(trimmed, currentCoords);
+        // Fallback to OpenStreetMap (Photon + Nominatim) when Maps key/Places isn't available
+        const osmResults = await searchPlacesOpen(trimmed, currentCoords);
         if (!cancelled) {
           setGoogleSuggestions([]);
           setDirectResults(osmResults);
@@ -144,7 +144,7 @@ export function PlaceSearchBox({
           window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
         }
         try {
-          const osmResults = await searchPlacesNominatim(trimmed, currentCoords);
+          const osmResults = await searchPlacesOpen(trimmed, currentCoords);
           if (!cancelled) {
             setGoogleSuggestions([]);
             setDirectResults(osmResults);
@@ -156,7 +156,7 @@ export function PlaceSearchBox({
       } finally {
         if (!cancelled) setSearching(false);
       }
-    }, 380);
+    }, 420);
 
     return () => {
       cancelled = true;
@@ -218,7 +218,7 @@ export function PlaceSearchBox({
       }
 
       if (results.length === 0) {
-        results = await searchPlacesNominatim(trimmed, currentCoords);
+        results = await searchPlacesOpen(trimmed, currentCoords);
       }
 
       setGoogleSuggestions([]);
@@ -280,10 +280,10 @@ export function PlaceSearchBox({
       if (isQuotaError(err)) {
         window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
       }
-      // Try Nominatim with prediction text as graceful fallback
+      // Try OpenStreetMap search with prediction text as graceful fallback
       try {
         const fallbackText = prediction.text?.text || query.trim();
-        const fallback = await searchPlacesNominatim(fallbackText, currentCoords);
+        const fallback = await searchPlacesOpen(fallbackText, currentCoords);
         if (fallback.length > 0) {
           setGoogleSuggestions([]);
           setDirectResults([]);
@@ -413,7 +413,7 @@ export function PlaceSearchBox({
         <ul
           role="listbox"
           aria-label="Risultati ricerca luoghi"
-          className="absolute left-0 right-0 z-30 mt-1.5 max-h-64 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111b27] shadow-xl divide-y divide-slate-100 dark:divide-slate-800"
+          className="absolute left-0 right-0 z-40 mt-1.5 max-h-64 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111b27] shadow-xl divide-y divide-slate-100 dark:divide-slate-800"
         >
           {googleSuggestions.map((suggestion, idx) => {
             const pred = suggestion.placePrediction;
