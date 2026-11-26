@@ -79,33 +79,57 @@ export async function reverseGeocodeCity(lat: number, lon: number): Promise<stri
   const timeout = window.setTimeout(() => controller.abort(), 8000);
 
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
-      lat
-    )}&lon=${encodeURIComponent(lon)}&accept-language=it`;
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+        lat
+      )}&lon=${encodeURIComponent(lon)}&accept-language=it`;
 
-    const res = await fetch(url, {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const addr = data?.address || {};
+        const city =
+          addr.city ||
+          addr.town ||
+          addr.village ||
+          addr.municipality ||
+          addr.hamlet ||
+          addr.county ||
+          '';
+        if (city.trim()) return city.trim();
+      }
+    } catch {
+      // Fall through to Photon reverse geocoding
+    }
+
+    const photonUrl = `https://photon.komoot.io/reverse?lat=${encodeURIComponent(
+      lat
+    )}&lon=${encodeURIComponent(lon)}`;
+    const photonRes = await fetch(photonUrl, {
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
       },
     });
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+    if (!photonRes.ok) {
+      throw new Error(`HTTP ${photonRes.status}`);
     }
-
-    const data = await res.json();
-    const addr = data?.address || {};
+    const photonData = await photonRes.json();
+    const props = photonData?.features?.[0]?.properties || {};
     const city =
-      addr.city ||
-      addr.town ||
-      addr.village ||
-      addr.municipality ||
-      addr.hamlet ||
-      addr.county ||
+      props.city ||
+      props.town ||
+      props.village ||
+      props.municipality ||
+      props.county ||
       '';
-
-    return city.trim() || null;
+    return typeof city === 'string' && city.trim() ? city.trim() : null;
   } finally {
     window.clearTimeout(timeout);
   }
@@ -119,6 +143,121 @@ export interface PlaceSearchResult {
   lat: number;
   lon: number;
   source: 'google' | 'osm';
+}
+
+interface PhotonFeature {
+  geometry?: {
+    coordinates?: [number, number];
+  };
+  properties?: {
+    osm_id?: number | string;
+    osm_type?: string;
+    type?: string;
+    name?: string;
+    street?: string;
+    housenumber?: string;
+    district?: string;
+    city?: string;
+    town?: string;
+    village?: string;
+    municipality?: string;
+    county?: string;
+    state?: string;
+    country?: string;
+    countrycode?: string;
+  };
+}
+
+export async function searchPlacesPhoton(
+  query: string,
+  nearCoords?: Coords | null
+): Promise<PlaceSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const params = new URLSearchParams({
+      q: trimmed,
+      limit: '8',
+    });
+
+    // Apply GPS bias only for single-word generic searches (e.g., "bar", "parcheggio"),
+    // so multi-word queries like "Bar Piccolo Chiavari" prioritize the city typed by the user.
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+    if (wordCount <= 1 && nearCoords && isValidCoords(nearCoords.lat, nearCoords.lon)) {
+      params.set('lat', String(nearCoords.lat));
+      params.set('lon', String(nearCoords.lon));
+    }
+
+    const res = await fetch(`https://photon.komoot.io/api/?${params.toString()}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = (await res.json()) as { features?: PhotonFeature[] };
+    const features = Array.isArray(data?.features) ? data.features : [];
+
+    const results: PlaceSearchResult[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < features.length; i++) {
+      const feat = features[i];
+      const coords = feat.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+
+      const lon = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (!isValidCoords(lat, lon)) continue;
+
+      const p = feat.properties || {};
+      const streetLine = [p.street, p.housenumber].filter(Boolean).join(' ').trim();
+      const name = (p.name && p.name.trim()) || streetLine || trimmed;
+
+      const city = (
+        p.city ||
+        p.town ||
+        p.village ||
+        p.municipality ||
+        (p.type === 'city' ? p.name : '') ||
+        p.county ||
+        ''
+      ).trim();
+
+      const addressParts = [streetLine, city, p.state, p.country]
+        .map((part) => (part || '').trim())
+        .filter((part, idx, arr) => Boolean(part) && part !== name && arr.indexOf(part) === idx);
+
+      const dedupeKey = `${name.toLowerCase()}|${lat.toFixed(4)},${lon.toFixed(4)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      results.push({
+        id: `photon-${p.osm_type || 'x'}-${p.osm_id ?? i}-${lat.toFixed(4)}`,
+        name,
+        address: addressParts.join(', '),
+        city,
+        lat,
+        lon,
+        source: 'osm',
+      });
+    }
+
+    // Prefer Italian results first when mixed international matches appear
+    const italian = results.filter((r) => r.address.toLowerCase().includes('italia'));
+    const other = results.filter((r) => !r.address.toLowerCase().includes('italia'));
+    return [...italian, ...other].slice(0, 6);
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export async function searchPlacesNominatim(
@@ -140,7 +279,8 @@ export async function searchPlacesNominatim(
       limit: '5',
     });
 
-    if (nearCoords && isValidCoords(nearCoords.lat, nearCoords.lon)) {
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+    if (wordCount <= 1 && nearCoords && isValidCoords(nearCoords.lat, nearCoords.lon)) {
       const delta = 0.35;
       params.set(
         'viewbox',
@@ -192,7 +332,7 @@ export async function searchPlacesNominatim(
         .filter(Boolean);
       const fallbackName = displayParts[0] || trimmed;
       const name = (item.name && item.name.trim()) || fallbackName;
-      const address = displayParts.slice(item.name ? 1 : 1, 4).join(', ') || item.display_name || '';
+      const address = displayParts.slice(1, 4).join(', ') || item.display_name || '';
 
       results.push({
         id: `osm-${item.place_id ?? `${lat},${lon}`}`,
@@ -209,4 +349,20 @@ export async function searchPlacesNominatim(
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+export async function searchPlacesOpen(
+  query: string,
+  nearCoords?: Coords | null
+): Promise<PlaceSearchResult[]> {
+  try {
+    const photonResults = await searchPlacesPhoton(query, nearCoords);
+    if (photonResults.length > 0) {
+      return photonResults;
+    }
+  } catch {
+    // Fallback to Nominatim if Photon is unreachable or throttled
+  }
+
+  return searchPlacesNominatim(query, nearCoords);
 }
